@@ -1,0 +1,39 @@
+name: Realty Data Auto Crawler
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # 한국 시간 기준 약 9시, 21시 (UTC 기준 0시, 12시)
+  workflow_dispatch:        # 수동 실행 버튼 활성화
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run main script
+      env:
+        # 깃허브 Settings -> Secrets에 저장한 이름을 그대로 사용
+        SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
+      run: python main.py
+
+    - name: Commit and Push changes
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add data/*.csv
+        # 변경사항이 없을 때 에러 방지
+        git commit -m "Auto-update: Realty Data $(date +'%Y-%m-%d %H:%M')" || echo "No changes to commit"
+        git push
