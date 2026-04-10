@@ -24,7 +24,8 @@ def main():
         return
 
     # 2. 날짜 설정 (데이터가 확실히 있는 3월로 테스트)
-    deal_ymd = datetime.now().strftime("%Y%m")
+    #deal_ymd = datetime.now().strftime("%Y%m")
+    deal_ymd = "202401"
     all_data = []
 
     for lawd_cd in TARGET_REGIONS:
