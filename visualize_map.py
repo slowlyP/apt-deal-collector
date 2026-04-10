@@ -1,26 +1,20 @@
 import pandas as pd
 import folium
+from folium.plugins import MarkerCluster
 import requests
 import os
 import time
 import urllib3
+import glob
 from dotenv import load_dotenv
 
-# 1. 시스템 설정
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
 KAKAO_API_KEY = os.environ.get('KAKAO_REST_API_KEY')
-DATA_FILE = "data/realty_combined_20260410_1641.csv"
 
 def get_kakao_coords(address):
-    """
-    [예외 처리 강화 버전]
-    - 타임아웃 설정
-    - API 상태 코드별 대응
-    - KA 헤더 인증 우회
-    """
-    if not KAKAO_API_KEY:
-        return None, None
+    """카카오 위치 변환 (Circuit Breaker 및 Timeout 적용)"""
+    if not KAKAO_API_KEY: return None, None
         
     url = "https://dapi.kakao.com/v2/local/search/address.json"
     headers = {
@@ -30,72 +24,105 @@ def get_kakao_coords(address):
     params = {"query": address}
     
     try:
-        # timeout=5 를 추가하여 서버 응답이 없을 때 무한 대기를 방지합니다.
+        # [Pro 예외처리 1] Timeout으로 서버 무한 대기 차단
         response = requests.get(url, headers=headers, params=params, verify=False, timeout=5)
         
         if response.status_code == 200:
             data = response.json()
             if data['documents']:
                 return float(data['documents'][0]['y']), float(data['documents'][0]['x'])
+                
+        # [Pro 예외처리 2] Circuit Breaker: 하루 할당량 초과 시 API 호출 강제 중단
         elif response.status_code == 429:
-            print("⚠️ API 호출 한도 초과(Quota Exceeded)")
-        return None, None
-    except requests.exceptions.RequestException as e:
-        # 네트워크 단절 등 통신 에러 발생 시 프로그램 중단 방지
-        return None, None
+            print("\n🚨 [치명적 오류] 카카오 API 일일 호출 한도(Quota) 초과!")
+            return "QUOTA_EXCEEDED", "QUOTA_EXCEEDED"
+            
+    except requests.exceptions.RequestException:
+        pass
+    return None, None
 
-def create_realty_map():
+def create_pro_map():
+    # 가장 최근에 생성된 csv 파일 자동으로 찾기
+    csv_files = glob.glob('data/realty_national_*.csv')
+    if not csv_files:
+        print("❌ 데이터 파일이 존재하지 않습니다.")
+        return
+    
+    DATA_FILE = max(csv_files, key=os.path.getctime)
+    print(f"📊 최신 데이터 로드 중: {DATA_FILE}")
+    
     try:
-        if not os.path.exists(DATA_FILE):
-            print("❌ 데이터 파일을 찾을 수 없습니다.")
-            return
-
         df = pd.read_csv(DATA_FILE)
-        
-        # 지도 생성 시 기본 좌표 (서울 강남구)
-        m = folium.Map(location=[37.5172, 127.0473], zoom_start=14, tiles='CartoDB positron')
-        
-        print(f"🚀 실시간성 및 신뢰성 검증 엔진 가동...")
-        
-        success_count = 0
-        for i, row in df.head(100).iterrows(): # 50개에서 100개로 확장 테스트
-            lat, lon = None, None
-            
-            # [예외 처리] 데이터가 NaN(결측치)인 경우 스킵
-            if pd.isna(row.get('apartment')) or pd.isna(row.get('dong')):
-                continue
+    except pd.errors.EmptyDataError:
+        print("❌ CSV 파일이 비어있습니다.")
+        return
 
-            # 1단계: 아파트명 정제 검색
-            clean_name = str(row['apartment']).split('(')[0].split(',')[0]
-            addr1 = f"서울특별시 강남구 {row['dong']} {clean_name}"
-            lat, lon = get_kakao_coords(addr1)
-            
-            # 2단계: 본번/부번 조합 검색 (Fallback)
-            if not lat:
-                bon = str(int(row['bonbeon'])) if 'bonbeon' in row and pd.notnull(row['bonbeon']) else ""
-                bu = str(int(row['bubeon'])) if 'bubeon' in row and pd.notnull(row['bubeon']) and row['bubeon'] != 0 else ""
-                jibun = f"{bon}-{bu}".strip("-")
-                if jibun:
-                    addr2 = f"서울특별시 강남구 {row['dong']} {jibun}"
-                    lat, lon = get_kakao_coords(addr2)
+    # [Pro 예외처리 3] 데이터 클렌징 (결측치 제거)
+    df = df.dropna(subset=['apartment', 'dong', 'price'])
+    
+    # 지도 초기화 (한국 중심)
+    m = folium.Map(location=[36.3, 127.5], zoom_start=7, tiles='CartoDB positron')
+    
+    # [Pro 성능 최적화] 다방/직방 스타일 마커 클러스터링 적용
+    marker_cluster = MarkerCluster(
+        name="전국 실거래가 현황",
+        overlay=True,
+        control=True
+    ).add_to(m)
 
-            if lat and lon:
-                # 마커 추가
-                folium.Marker(
-                    location=[lat, lon],
-                    popup=folium.Popup(f"<b>{row['apartment']}</b><br>거래가: {row['price']}만원", max_width=200),
-                    tooltip=row['apartment']
-                ).add_to(m)
-                success_count += 1
-            
-            # API 매너 대기 (과도한 요청 방지)
-            time.sleep(0.05)
+    print(f"🚀 카카오 로컬 엔진 & 클러스터링 매핑 가동 (총 {len(df)}건)")
+    
+    success_count = 0
+    quota_hit = False
 
-        m.save("realty_map.html")
-        print(f"\n✅ 프레임워크 검증 완료: {success_count}건 매핑 성공")
+    for i, row in df.iterrows():
+        if quota_hit: break # 한도 초과 시 즉시 루프 탈출
         
-    except Exception as e:
-        print(f"🔥 치명적 오류 발생: {e}")
+        # 1차 정제 주소
+        clean_name = str(row['apartment']).split('(')[0].split(',')[0].strip()
+        addr = f"서울특별시 강남구 {row['dong']} {clean_name}" if "강남구" in row.get('region', '') else f"{row.get('region', '').split('_')[0]} {row['dong']} {clean_name}"
+        
+        lat, lon = get_kakao_coords(addr)
+        
+        # 한도 초과 감지
+        if lat == "QUOTA_EXCEEDED":
+            quota_hit = True
+            break
+            
+        # 2차 지번 주소 (Fallback)
+        if not lat:
+            # int() 강제 변환을 없애고 문자열 분리(split)로 소수점만 제거
+            bon = str(row.get('bonbeon')).split('.')[0] if pd.notnull(row.get('bonbeon')) else ""
+            bu = str(row.get('bubeon')).split('.')[0] if pd.notnull(row.get('bubeon')) else ""
+            
+            if bu in ['0', '0000', 'nan', 'None']:
+                bu = ""
+                
+            jibun = f"{bon}-{bu}".strip("-")
+            # 'nan' 같은 가짜 데이터가 아닐 때만 주소 검색
+            if jibun and jibun != "nan":
+                lat, lon = get_kakao_coords(f"{row.get('region', '').split('_')[0]} {row['dong']} {jibun}")
+
+        if lat and lon:
+            # 개별 마커가 아닌 '클러스터'에 데이터 삽입
+            folium.Marker(
+                location=[lat, lon],
+                popup=folium.Popup(f"<div style='width:200px'><b>{row['apartment']}</b><br>지역: {row.get('region', '')}<br>거래가: {row['price']}만원</div>", max_width=300),
+                tooltip=f"{row['apartment']} ({row['price']}만)",
+                icon=folium.Icon(color='blue', icon='home', prefix='fa')
+            ).add_to(marker_cluster)
+            success_count += 1
+            
+            # 진행상황 로깅 (50건마다 출력하여 로그 폭주 방지)
+            if success_count % 50 == 0:
+                print(f"🔄 매핑 진행 중... ({success_count}건 완료)")
+                
+        time.sleep(0.04) # 초당 약 25회 요청 제한 준수
+
+    m.save("realty_map.html")
+    print(f"\n✨ Pro 버전 시각화 완료! (성공: {success_count}건)")
+    if quota_hit:
+        print("⚠️ API 한도 초과로 일부 데이터만 매핑되었습니다. 내일 이어서 자동으로 수행됩니다.")
 
 if __name__ == "__main__":
-    create_realty_map()
+    create_pro_map()
