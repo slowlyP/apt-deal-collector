@@ -23,24 +23,24 @@ jobs:
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Run main script
+    - name: Run Python Scripts (수집 및 시각화 통합)
       env:
-        # 깃허브 Settings -> Secrets에 저장한 이름을 그대로 사용
-        SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
-      run: python main.py
-
-    - name: Push changes
-      run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-          git add data/*.csv || echo "No data to add"  # 데이터가 없어도 통과
-          # 변경사항이 있을 때만 커밋
-          git diff --quiet && git diff --staged --quiet || git commit -m "Add latest realty data"
-          git push
-    - name: Run scripts
-      env:
+        # 깃허브 Settings -> Secrets에 저장한 키들을 주입
         SERVICE_KEY: ${{ secrets.SERVICE_KEY }}
         KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
       run: |
-        python main.py           # 1. 전국 데이터 수집
-        python visualize_map.py  # 2. 수집된 데이터로 지도 갱신
+        python main.py           # 1. 전국 데이터 수집 (CSV 생성)
+        python visualize_map.py  # 2. 수집된 데이터로 지도 갱신 (HTML 생성)
+
+    - name: Push changes (가장 마지막에 한 번만 실행)
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        
+        # CSV 데이터와 생성된 지도 파일(HTML)을 모두 깃허브에 올릴 준비
+        # (Flask 연동을 위해 templates 폴더 안에 있다면 templates/realty_map.html 로 변경)
+        git add data/*.csv realty_map.html templates/*.html || echo "No changes to add"
+        
+        # 변경사항이 있을 때만 깃허브에 커밋하고 푸시
+        git diff --quiet && git diff --staged --quiet || git commit -m "Auto-update: Realty data and Map"
+        git push
