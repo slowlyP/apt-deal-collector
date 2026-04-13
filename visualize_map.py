@@ -7,6 +7,7 @@ import time
 import urllib3
 import glob
 from dotenv import load_dotenv
+from news_collector import get_realtime_news
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 load_dotenv()
@@ -118,9 +119,61 @@ def create_pro_map():
                 print(f"🔄 매핑 진행 중... ({success_count}건 완료)")
                 
         time.sleep(0.04) # 초당 약 25회 요청 제한 준수
+# ---------------------------------------------------------
+    # [수정] 실시간 뉴스 이슈 자동 좌표 매핑 로직
+    # ---------------------------------------------------------
+    print("⚡ 실시간 뉴스에서 지역을 분석하여 자동으로 마킹합니다...")
+    news_df = get_realtime_news()
 
-    m.save("realty_map.html")
-    print(f"\n✨ Pro 버전 시각화 완료! (성공: {success_count}건)")
+    if news_df is not None and not news_df.empty:
+        # 서울 25개 구 대표 좌표 (이 목록에 있으면 자동으로 찍힙니다)
+        seoul_gu_coords = {
+            '강남': [37.495, 127.066], '서초': [37.483, 127.032], '송파': [37.514, 127.106],
+            '강동': [37.530, 127.123], '마포': [37.566, 126.901], '용산': [37.532, 126.990],
+            '성동': [37.563, 127.036], '광진': [37.538, 127.082], '동대문': [37.574, 127.039],
+            '중랑': [37.606, 127.092], '성북': [37.589, 127.016], '강북': [37.639, 127.025],
+            '도봉': [37.668, 127.047], '노원': [37.654, 127.056], '은평': [37.602, 126.929],
+            '서대문': [37.579, 126.936], '양천': [37.516, 126.866], '강서': [37.550, 126.849],
+            '구로': [37.495, 126.887], '금천': [37.456, 126.895], '영등포': [37.526, 126.896],
+            '동작': [37.512, 126.939], '관악': [37.478, 126.951], '종로': [37.573, 126.979],
+            '중구': [37.563, 126.997], '여의도': [37.521, 126.924], '반포': [37.504, 126.994],
+            '잠실': [37.513, 127.094], '성수': [37.543, 127.044]
+        }
+
+        for _, row in news_df.iterrows():
+            # 뉴스 제목에서 지역명 찾기
+            region = row.get('region')
+            
+            # 1. 수집된 region이 좌표 목록에 있는지 확인
+            if region in seoul_gu_coords:
+                target_pos = seoul_gu_coords[region]
+                
+                popup_html = f"""
+                <div style="width:250px; font-family: 'Malgun Gothic', sans-serif;">
+                    <div style="background-color:#ff4757; color:white; padding:5px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:10px;">
+                        🚨 실시간 핫이슈: {region}
+                    </div>
+                    <a href="{row['link']}" target="_blank" style="text-decoration:none; color:#2f3542; font-size:13px; font-weight:bold;">
+                        {row['title']}
+                    </a>
+                    <div style="margin-top:5px; font-size:11px; color:#747d8c;">
+                        출처: 네이버 뉴스 검색 API
+                    </div>
+                </div>
+                """
+                
+                folium.Marker(
+                    location=target_pos,
+                    popup=folium.Popup(popup_html, max_width=300),
+                    icon=folium.Icon(color='red', icon='bolt', prefix='fa'), # 번개 아이콘으로 변경
+                    tooltip=f"🔥 {region} 실시간 이슈"
+                ).add_to(m)
+    # ---------------------------------------------------------
+
+    # [저장 경로 설정]
+    # Flask 서버를 쓰고 계시다면 templates 폴더 안에 저장해야 웹에서 보입니다.
+    m.save("templates/realty_map.html") 
+    print(f"\n✨ 하이브리드 지도 생성 완료! (경로: templates/realty_map.html)")
     if quota_hit:
         print("⚠️ API 한도 초과로 일부 데이터만 매핑되었습니다. 내일 이어서 자동으로 수행됩니다.")
 

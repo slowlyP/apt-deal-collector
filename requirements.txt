@@ -1,6 +1,21 @@
+# Web Framework
+flask
+
+# Scheduling (로컬 자동화용 확장)
+apscheduler
+
+# Data Processing
 pandas==2.2.2
 numpy<2.0.0
+
+# API & Networking
 requests
 lxml
 python-dotenv
+
+# Visualization
 folium
+
+# Database
+sqlalchemy
+pymysql
