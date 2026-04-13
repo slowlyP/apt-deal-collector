@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -r requirements.txt  # <-- 이 줄이 requirements.txt를 읽어서 설치하는 핵심입니다!
 
     - name: Run Python Scripts (수집 및 시각화 통합)
       env:
